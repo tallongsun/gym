@@ -9,6 +9,7 @@ from parl.utils import logger
 from nes_py.wrappers import JoypadSpace
 import gym_super_mario_bros
 from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
+import math
 
 LEARNING_RATE = 1e-3
 TYPE = "car"
@@ -52,11 +53,18 @@ class Agent(parl.Agent):
         Returns:
             act(int): action
         """
-        obs = paddle.to_tensor(obs, dtype='float32')
-        prob = self.alg.predict(obs)
-        prob = prob.numpy()
-        act = np.random.choice(len(prob), 1, p=prob)[0]
-        return act
+        if TYPE == "car":
+            if np.random.uniform(0, 1) < 0.9:  #根据table的Q值选动作
+                act = self.predict(obs)
+            else:
+                act = np.random.choice(3)  #有一定概率随机探索选取一个动作
+            return act
+        else:
+            obs = paddle.to_tensor(obs, dtype='float32')
+            prob = self.alg.predict(obs)
+            prob = prob.numpy()
+            act = np.random.choice(len(prob), 1, p=prob)[0]
+            return act
 
     def predict(self, obs):
         """Predict an action when given an observation
@@ -118,14 +126,17 @@ def run_train_episode(agent, env, render=False,prepro=False):
         action = agent.sample(obs)
         action_list.append(action)
 
-        obs, reward, done, info = env.step(action)
-
+        obs_next, reward, done, info = env.step(action)
         if TYPE == "car":
-            if obs[0] > preHeight:
-                reward += 1
-            if obs[0] > maxHeight:
-                maxHeight = obs[0]
-                reward += 2
+            reward = 100*((math.sin(3*obs_next[0]) * 0.0025 + 0.5 * obs_next[1] * obs_next[1]) - (math.sin(3*obs[0]) * 0.0025 + 0.5 * obs[1] * obs[1]))
+        obs = obs_next
+
+        # if TYPE == "car":
+        #     if obs[0] > preHeight:
+        #         reward += 1
+        #     if obs[0] > maxHeight:
+        #         maxHeight = obs[0]
+        #         reward += 2
 
         reward_list.append(reward)
         if render:
@@ -136,7 +147,7 @@ def run_train_episode(agent, env, render=False,prepro=False):
 
 
 # evaluate 5 episodes
-def run_evaluate_episodes(agent, env, eval_episodes=1, render=False,prepro=False):
+def run_evaluate_episodes(agent, env, eval_episodes=5, render=False,prepro=False):
     eval_reward = []
     for i in range(eval_episodes):
         obs = env.reset()
@@ -156,11 +167,14 @@ def run_evaluate_episodes(agent, env, eval_episodes=1, render=False,prepro=False
 
 
 def calc_reward_to_go(reward_list, gamma=0.99):
+    if TYPE == "car":
+        gamma = 0.9
     for i in range(len(reward_list) - 2, -1, -1):
         # G_i = r_i + γ·G_i+1
         reward_list[i] += gamma * reward_list[i + 1]  # Gt
-    reward_list -= np.mean(reward_list)
-    reward_list /= np.std(reward_list)
+    if TYPE != "car":
+        reward_list -= np.mean(reward_list)
+        reward_list /= np.std(reward_list)
     return np.array(reward_list)
 
 #Function that apply the algorithm for future discount reward
@@ -201,6 +215,7 @@ def create_env():
 
 def main():
     prepro = False
+    lr = LEARNING_RATE
     env = create_env()
     # env = env.unwrapped # Cancel the minimum score limit
     if TYPE == "pong":
@@ -211,12 +226,14 @@ def main():
         prepro = True
     else:
         obs_dim = env.observation_space.shape[0]
+        if TYPE == "car":
+            lr = 1e-2
     act_dim = env.action_space.n
     logger.info('obs_dim {}, act_dim {}'.format(obs_dim, act_dim))
 
     # build an agent
     model = Model(obs_dim=obs_dim, act_dim=act_dim)
-    alg = parl.algorithms.PolicyGradient(model, lr=LEARNING_RATE)
+    alg = parl.algorithms.PolicyGradient(model, lr=lr)
     agent = Agent(alg)
 
     # load model and evaluate
