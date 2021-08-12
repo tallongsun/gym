@@ -32,19 +32,20 @@ def my_process_data(env):
 
     diff = np.insert(np.diff(prices), 0, 0)
     #signal_features = env.df.loc[:, ['Close', 'Open', 'High', 'Low','Volume']].to_numpy()[start:end]
-    signal_features = env.df.loc[:, ['Close', 'Volume']].to_numpy()[start:end]
-    signal_features = np.column_stack((prices, diff,signal_features))
+    signal_features = env.df.loc[:, ['Volume']].astype(np.float).to_numpy()[start:end]
+    # signal_features = np.column_stack((prices, diff,signal_features))
 
     return prices, signal_features
 
 class MyStockEnv(StocksEnv):
     _process_data = my_process_data
 
+
 env = MyStockEnv(
                df = STOCKS_GOOGL,
-               window_size = 10,
+               window_size = 5,
                #frame_bound = (10, 300)
-               frame_bound = (10, len(STOCKS_GOOGL)))
+               frame_bound = (5, len(STOCKS_GOOGL)))
 print()
 print("custom_env information:")
 print("> shape:", env.shape)
@@ -56,35 +57,38 @@ print("> trade_fee_bid_percent:",env.trade_fee_bid_percent)
 print("> trade_fee_ask_percent:",env.trade_fee_ask_percent)
 
 observation = env.reset()
+print("x",observation)
+observation, reward, done, info = env.step(1)
+print("x",observation,info,reward)
+observation, reward, done, info = env.step(1)
+print("x",observation,info,reward)
+observation[:,0]/=100
+observation, reward, done, info = env.step(0)
+print("x",observation,info,reward)
+observation = env.reset()
+print("x",observation)
+# observation, reward, done, info = env.step(0)
+# print("x",info,reward)
+# observation, reward, done, info = env.step(1)
+# print("x",info,reward)
+# observation, reward, done, info = env.step(0)
+# print("x",info,reward)
 
-observation, reward, done, info = env.step(1)
-print("x",info,reward)
-observation, reward, done, info = env.step(1)
-print("x",info,reward)
-observation, reward, done, info = env.step(0)
-print("x",info,reward)
-observation, reward, done, info = env.step(0)
-print("x",info,reward)
-observation, reward, done, info = env.step(1)
-print("x",info,reward)
-observation, reward, done, info = env.step(0)
-print("x",info,reward)
-
-# i = 0
-# while True:
-#     action = env.action_space.sample()
-#     observation, reward, done, info = env.step(action)
-#     if i==0:
-#         env.render()
-#     print(action,info,reward)
-#     if done:
-#         print(i)
-#         print("info:",info)
-#         break
-#     i+=1
-# plt.cla()
-# env.render_all()
-# plt.show()
+i = 0
+while True:
+    action = env.action_space.sample()
+    observation, reward, done, info = env.step(action)
+    if i==0:
+        env.render()
+    # print(action,info,reward)
+    if done:
+        print(i)
+        print("info:",info)
+        break
+    i+=1
+plt.cla()
+env.render_all()
+plt.show()
 
 class Model(parl.Model):
     def __init__(self, obs_dim, act_dim):
@@ -134,7 +138,6 @@ def run_train_episode(agent, env, render=False):
         obs_list.append(obs)
         action = agent.sample(obs)
         action_list.append(action)
-
         obs, reward, done, info = env.step(action)
         reward_list.append(reward)
         if render:
@@ -152,7 +155,6 @@ def run_evaluate_episodes(agent, env, eval_episodes=1, render=False):
             obs = data_process(obs)
             action = agent.predict(obs)
             obs, reward, isOver, info = env.step(action)
-            print(action,info,reward)
             episode_reward += reward
             if isOver:
                 print("info:",info)
@@ -165,11 +167,11 @@ def run_evaluate_episodes(agent, env, eval_episodes=1, render=False):
     return np.mean(eval_reward)
 
 def data_process(obs):
-    # 缩放数据尺度
-    obs[:,0]/=100
+    # 缩放数据尺度,这个预处理会改变后续每一步返回的obs值，不能这么处理
+    # obs[:,0]/=100
     return obs.astype(np.float).ravel()
 
-def calc_reward_to_go(reward_list, gamma=0.99):
+def calc_reward_to_go(reward_list, gamma=0.9):
     for i in range(len(reward_list) - 2, -1, -1):
         # G_i = r_i + γ·G_i+1
         reward_list[i] += gamma * reward_list[i + 1]  # Gt
@@ -178,16 +180,18 @@ def calc_reward_to_go(reward_list, gamma=0.99):
 obs_dim = env.observation_space.shape[0]*env.observation_space.shape[1]
 act_dim = env.action_space.n
 model = Model(obs_dim=obs_dim, act_dim=act_dim)
-alg = parl.algorithms.PolicyGradient(model, lr=1e-3)
+alg = parl.algorithms.PolicyGradient(model, lr=1e-2)
 agent = Agent(alg)
 logger.info('obs_dim {}, act_dim {}'.format(obs_dim, act_dim))
 
 if os.path.exists('./trade.ckpt'):
     agent.restore('./trade.ckpt')
+    logger.info("test action:")
+    logger.info(agent.predict(data_process(np.array([[32847.76],[32847.76],[32847.76],[32847.76],[32847.76],]))))
     logger.info("Total reward: {}".format(run_evaluate_episodes(agent, env, render=True)))
     exit()
 
-for i in range(1000):
+for i in range(100):
     obs_list, action_list, reward_list = run_train_episode(agent, env,render=False)
     if i % 10 == 0:
         logger.info("Episode {}, Reward Sum {}.".format(
@@ -199,7 +203,7 @@ for i in range(1000):
     reward_list = calc_reward_to_go(reward_list)
 
     agent.learn(batch_obs, batch_action, reward_list)
-    if (i + 1) % 100 == 0:
+    if (i + 1) % 10 == 0:
         total_reward = run_evaluate_episodes(agent, env, render=False)
         logger.info('Test reward: {}'.format(total_reward))
 agent.save('./trade.ckpt')
